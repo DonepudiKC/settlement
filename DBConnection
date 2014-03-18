@@ -1,0 +1,171 @@
+package com.acxiom.walmart.settlement.data.dboperations;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+
+import javax.naming.Context;
+import javax.naming.InitialContext;
+import javax.naming.NamingException;
+import javax.sql.DataSource;
+
+import oracle.ucp.jdbc.PoolDataSource;
+import oracle.ucp.jdbc.ValidConnection;
+
+import org.apache.log4j.Logger;
+
+/**
+ * This class is used to get Settlement DataBase connection object
+ * 
+ * @author veeranna_kurakula
+ *
+ */
+public class DBConnection {
+    private static final String ORACLE_DS = "settlement-ds";
+    private static Logger logger = Logger.getLogger(DBConnection.class);
+    private static final long ONE_SECOND = 1000;
+    
+    /**
+     * This method is used to get the connection object from the connection pool
+     * 
+     * @return Connection Object
+     * @throws SQLException
+     */
+    private static Connection getConnectionFromPool() throws SQLException {
+        Connection connection = null;
+        
+        try{
+	        //JNDI lookup for data source object
+	        DataSource ds = lookupDataSource();
+	
+	        if( null != ds ) {
+	            //Data source is configured to use Oracle UCP (Universal Connection Pool).  This is the pool object configured in Websphere
+	        	PoolDataSource pds = ds.unwrap( PoolDataSource.class );
+		        connection = pds.getConnection();
+		        //Oracle FCF (Fast Connection Failover) requires us to check to see if the connection we have is valid
+		        if( !validateConnection( connection ) ) {
+		            //If not valid, wait for one second and then try one last time 
+		        	pause( ONE_SECOND );
+			         connection = pds.getConnection();
+			         if( !validateConnection( connection ) ) {
+			             throw new SQLException( "Cannot get a valid connection from pool after two tries." );
+			         }
+		        }
+	        }
+	        else {
+	        	throw new SQLException( "JNDI lookup for " + ORACLE_DS + " returned null." );
+	        }
+        }catch(Exception e){
+        }
+        return connection;
+    }
+    
+    /**
+     * This method is used to wait a thread for a particular time.
+     * @param millisecondsToWait
+     */
+    
+    private static void pause( long millisecondsToWait ) {
+        try {
+        	Thread.sleep( millisecondsToWait );
+        }
+        catch( Exception e ) {
+        }
+    }
+    
+    /**
+     * This method used to get DataSource object
+     * 
+     * @return DataSource Object
+     * @throws SQLException
+     */
+    private static DataSource lookupDataSource() throws SQLException {
+    	DataSource ds = null;
+    	try {
+    		Context initContext = new InitialContext();
+            ds = (DataSource) initContext.lookup(ORACLE_DS);
+    	}
+    	catch(Exception e ) {
+    		//recasting to SQLException
+    		//All of the implementation classes translate a SQLException as 200 (Database Error)
+            //Any other type of exception would be translated as 999 (Unknown Error)
+    		//throw new SQLException(e.toString(),e );
+    		throw new SQLException(e);
+    	}
+    	return ds;
+    }
+   
+    /**
+     * 
+     * @param databaseConnection
+     * @return either true or false
+     */
+    private static boolean validateConnection( Connection databaseConnection )  {
+    	boolean isValid = false;
+    	
+    	try {
+			if( null != databaseConnection) {
+				ValidConnection validConnection = databaseConnection.unwrap( ValidConnection.class );
+	    		if( ( null != validConnection ) && ( validConnection.isValid() ) ) {
+		    		isValid = true;
+		    	}
+		    	else {
+		    		//If it is not valid, call setInvalid so that the connection gets removed from the pool
+		    		if(null != validConnection) {
+		    			validConnection.setInvalid();
+		    		}
+		    	}
+			}
+    	}
+    	catch( SQLException sqle ) {
+    	}
+    	
+    	return isValid;
+    }
+    
+    /**
+     * This method is used to close the connection object
+     * 
+     * @param connection
+     */
+    public static void closeConnection(Connection connection) {
+        try {
+            connection.close();
+        } catch (SQLException e) {
+            logger.error("Unable to close DB connection" + e);
+        }
+    }
+    
+	/**
+	 * This is used to get Connection object
+	 * 
+	 * @return Connection Object
+	 * @throws SQLException
+	 */
+	public static Connection getConnection() throws SQLException {
+		// return getConnectionFromPool();
+
+		/** Uses JNDI and Datasource (preferred style). */
+		String DATASOURCE_CONTEXT = "java:comp/env/jdbc/settlement-ds";
+		
+		//String DATASOURCE_CONTEXT = "jdbc/settlement-ds";
+
+		Connection connection = null;
+		
+		try {
+			
+			Context initialContext = new InitialContext();
+			DataSource datasource = (DataSource) initialContext.lookup(DATASOURCE_CONTEXT);
+			if (datasource != null) {
+				connection = datasource.getConnection();
+			} else {
+				logger.debug("Failed to lookup datasource.");
+			}
+		} catch (NamingException ex) {
+			logger.debug("Cannot get connection: " + ex);
+		} catch (SQLException ex) {
+			logger.debug("Cannot get connection: " + ex);
+		}
+		return connection;
+	}
+    
+}                           
